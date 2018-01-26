@@ -73,6 +73,9 @@ struct sd_dhcp_lease {
         struct sd_dhcp_route *static_route;
         size_t static_route_size, static_route_allocated;
 
+        struct sd_dhcp_route *classless_static_route;
+        size_t classless_static_route_size, classless_static_route_allocated;
+
         uint16_t mtu; /* 0 if unset */
 
         char *domainname;

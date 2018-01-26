@@ -97,33 +97,6 @@ static int link_set_dhcp_routes(Link *link) {
         if (r < 0)
                 return log_link_warning_errno(link, r, "DHCP error: could not get address: %m");
 
-        n = sd_dhcp_lease_get_routes(link->dhcp_lease, &static_routes);
-        if (n < 0)
-                log_link_debug_errno(link, n, "DHCP error: could not get routes: %m");
-
-        for (i = 0; i < n; i++) {
-                _cleanup_route_free_ Route *route = NULL;
-
-                r = route_new(&route);
-                if (r < 0)
-                        return log_link_error_errno(link, r, "Could not allocate route: %m");
-
-                route->family = AF_INET;
-                route->protocol = RTPROT_DHCP;
-                assert_se(sd_dhcp_route_get_gateway(static_routes[i], &route->gw.in) >= 0);
-                assert_se(sd_dhcp_route_get_destination(static_routes[i], &route->dst.in) >= 0);
-                assert_se(sd_dhcp_route_get_destination_prefix_length(static_routes[i], &route->dst_prefixlen) >= 0);
-                route->priority = link->network->dhcp_route_metric;
-                route->table = table;
-                route->scope = route_scope_from_address(route, &address);
-
-                r = route_configure(route, link, dhcp4_route_handler);
-                if (r < 0)
-                        return log_link_warning_errno(link, r, "Could not set host route: %m");
-
-                link->dhcp4_messages++;
-        }
-
         r = sd_dhcp_lease_get_router(link->dhcp_lease, &gateway);
         if (r == -ENODATA)
                 log_link_info_errno(link, r, "DHCP: No routes received from DHCP server: %m");
@@ -132,7 +105,7 @@ static int link_set_dhcp_routes(Link *link) {
 
         /* According to RFC 3442: If the DHCP server returns both a Classless Static Routes option and
            a Router option, the DHCP client MUST ignore the Router option. */
-        if (r >= 0 && link->dhcp4_messages <= 0) {
+        if (r >= 0 && !link->dhcp_lease->routes_are_classless) {
                 _cleanup_route_free_ Route *route = NULL;
                 _cleanup_route_free_ Route *route_gw = NULL;
 
@@ -179,6 +152,34 @@ static int link_set_dhcp_routes(Link *link) {
 
                 link->dhcp4_messages++;
         }
+
+        n = sd_dhcp_lease_get_routes(link->dhcp_lease, &static_routes);
+        if (n < 0)
+                log_link_debug_errno(link, n, "DHCP error: could not get routes: %m");
+
+        for (i = 0; i < n; i++) {
+                _cleanup_route_free_ Route *route = NULL;
+
+                r = route_new(&route);
+                if (r < 0)
+                        return log_link_error_errno(link, r, "Could not allocate route: %m");
+
+                route->family = AF_INET;
+                route->protocol = RTPROT_DHCP;
+                assert_se(sd_dhcp_route_get_gateway(static_routes[i], &route->gw.in) >= 0);
+                assert_se(sd_dhcp_route_get_destination(static_routes[i], &route->dst.in) >= 0);
+                assert_se(sd_dhcp_route_get_destination_prefix_length(static_routes[i], &route->dst_prefixlen) >= 0);
+                route->priority = link->network->dhcp_route_metric;
+                route->table = table;
+                route->scope = route_scope_from_address(route, &address);
+
+                r = route_configure(route, link, dhcp4_route_handler);
+                if (r < 0)
+                        return log_link_warning_errno(link, r, "Could not set host route: %m");
+
+                link->dhcp4_messages++;
+        }
+
 
         return 0;
 }

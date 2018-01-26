@@ -545,6 +545,8 @@ static int lease_parse_classless_routes(
 int dhcp_lease_parse_options(uint8_t code, uint8_t len, const void *option, void *userdata) {
         sd_dhcp_lease *lease = userdata;
         int r;
+        sd_dhcp_route *routes = NULL;
+        size_t route_size = 0, route_allocated = 0;
 
         assert(lease);
 
@@ -601,6 +603,11 @@ int dhcp_lease_parse_options(uint8_t code, uint8_t len, const void *option, void
                 break;
 
         case SD_DHCP_OPTION_STATIC_ROUTE:
+                // RFC 3442 states that static routes should be ignored if static classless routes are supplied
+                if (lease->routes_are_classless) {
+                        log_info("ignoring static routes because classless routes were also specified");
+                        break;
+                }
                 r = lease_parse_routes(option, len, &lease->static_route, &lease->static_route_size, &lease->static_route_allocated);
                 if (r < 0)
                         log_debug_errno(r, "Failed to parse static routes, ignoring: %m");
@@ -660,13 +667,27 @@ int dhcp_lease_parse_options(uint8_t code, uint8_t len, const void *option, void
                 break;
 
         case SD_DHCP_OPTION_CLASSLESS_STATIC_ROUTE:
+                // RFC 3442 states that if classless static routes are supplied the client
+                // must ignore the static-routes (option 33). Parse them to a temporary list,
+                // and if successfull swap the routes and free the old ones
                 r = lease_parse_classless_routes(
                                 option, len,
-                                &lease->static_route,
-                                &lease->static_route_size,
-                                &lease->static_route_allocated);
-                if (r < 0)
+                                &routes,
+                                &route_size,
+                                &route_allocated);
+                if (r < 0) {
                         log_debug_errno(r, "Failed to parse classless routes, ignoring: %m");
+                        break;
+                }
+                // If successful swap everything over
+                if (lease->static_route)
+                        // log that we're overwriting previously parsed routes
+                        log_info("Ignoring static routes because classless routes were also specified");
+                lease->routes_are_classless = true;
+                free(lease->static_route);
+                lease->static_route = routes;
+                lease->static_route_size = route_size;
+                lease->static_route_allocated = route_allocated;
                 break;
 
         case SD_DHCP_OPTION_NEW_TZDB_TIMEZONE: {
